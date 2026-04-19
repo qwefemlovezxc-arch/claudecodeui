@@ -39,7 +39,7 @@ spec:
       initContainers:
         - name: vpn
           image: ghcr.io/qwefemlovezxc-arch/amneziawg-sidecar:latest
-          imagePullPolicy: Always
+          imagePullPolicy: Never    # local-only image, built+imported on server3
           restartPolicy: Always
           env:
             - name: AWG_CONFIG_PATH
@@ -96,7 +96,7 @@ spec:
       containers:
         - name: app
           image: ghcr.io/qwefemlovezxc-arch/claudecodeui-sandbox:latest
-          imagePullPolicy: Always
+          imagePullPolicy: Never    # local-only image, built+imported on server3
           ports:
             - name: http
               containerPort: 3001
