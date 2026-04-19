@@ -424,6 +424,18 @@ async function getProjects(progressCallback = null) {
       // Extract actual project directory from JSONL sessions
       const actualProjectDir = await extractProjectDirectory(entry.name);
 
+      // Sandbox: when WORKSPACES_ROOT is set, hide projects stored under paths
+      // outside that root. Prevents the UI from listing any project the user
+      // might have used before the deploy was sandboxed.
+      if (process.env.WORKSPACES_ROOT && actualProjectDir) {
+        const wsRoot = path.resolve(process.env.WORKSPACES_ROOT);
+        const resolvedProjectDir = path.resolve(actualProjectDir);
+        if (resolvedProjectDir !== wsRoot &&
+            !resolvedProjectDir.startsWith(wsRoot + path.sep)) {
+          continue;
+        }
+      }
+
       // Get display name from config or generate one
       const customName = config[entry.name]?.displayName;
       const autoDisplayName = await generateDisplayName(entry.name, actualProjectDir);
@@ -549,6 +561,16 @@ async function getProjects(progressCallback = null) {
         } catch (error) {
           // Fall back to decoded project name
           actualProjectDir = projectName.replace(/-/g, '/');
+        }
+      }
+
+      // Sandbox: same filter as above, applied to manually-registered projects.
+      if (process.env.WORKSPACES_ROOT && actualProjectDir) {
+        const wsRoot = path.resolve(process.env.WORKSPACES_ROOT);
+        const resolvedProjectDir = path.resolve(actualProjectDir);
+        if (resolvedProjectDir !== wsRoot &&
+            !resolvedProjectDir.startsWith(wsRoot + path.sep)) {
+          continue;
         }
       }
 
@@ -1226,6 +1248,14 @@ async function deleteProject(projectName, force = false, deleteData = false) {
 // Add a project manually to the config (without creating folders)
 async function addProjectManually(projectPath, displayName = null) {
   const absolutePath = path.resolve(projectPath);
+
+  // Sandbox: refuse to register projects outside WORKSPACES_ROOT when set.
+  if (process.env.WORKSPACES_ROOT) {
+    const wsRoot = path.resolve(process.env.WORKSPACES_ROOT);
+    if (absolutePath !== wsRoot && !absolutePath.startsWith(wsRoot + path.sep)) {
+      throw new Error(`Project path must be inside the allowed workspace root: ${wsRoot}`);
+    }
+  }
 
   try {
     // Check if the path exists

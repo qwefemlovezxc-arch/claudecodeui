@@ -898,6 +898,22 @@ function validatePathInProject(projectRoot, targetPath) {
     if (!resolved.startsWith(normalizedRoot)) {
         return { valid: false, error: 'Path must be under project root' };
     }
+    // Sandbox layer: when WORKSPACES_ROOT is set (production deploy),
+    // projectRoot itself must live inside it. Blocks any request that
+    // targets a project outside the allowed workspace tree, even if the
+    // client forged projectRoot.
+    if (process.env.WORKSPACES_ROOT) {
+        const workspacesRoot = path.resolve(process.env.WORKSPACES_ROOT);
+        const resolvedProjectRoot = path.resolve(projectRoot);
+        if (resolvedProjectRoot !== workspacesRoot &&
+            !resolvedProjectRoot.startsWith(workspacesRoot + path.sep)) {
+            return { valid: false, error: 'Project is outside the allowed workspace root' };
+        }
+        if (resolved !== workspacesRoot &&
+            !resolved.startsWith(workspacesRoot + path.sep)) {
+            return { valid: false, error: 'Target path is outside the allowed workspace root' };
+        }
+    }
     return { valid: true, resolved };
 }
 
