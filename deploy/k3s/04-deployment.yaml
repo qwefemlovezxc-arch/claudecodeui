@@ -22,6 +22,69 @@ spec:
       nodeSelector:
         kubernetes.io/hostname: server3
       automountServiceAccountToken: false
+
+      # Route DNS through the VPN tunnel too. If we left dnsPolicy at the
+      # default (ClusterFirst), the app would resolve via kube-dns and
+      # then its outbound traffic would bypass the wg0 route for DNS.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 100.64.0.1    # VPN internal resolver (from nl.conf DNS=)
+          - 8.8.4.4
+
+      # ── Sidecar: AmneziaWG userspace tunnel ──────────────────────────
+      # Native k8s sidecar (initContainer with restartPolicy: Always).
+      # Starts first, stays up, app container waits for its startup probe
+      # to succeed before it begins.
+      initContainers:
+        - name: vpn
+          image: ghcr.io/qwefemlovezxc-arch/amneziawg-sidecar:latest
+          imagePullPolicy: Always
+          restartPolicy: Always
+          env:
+            - name: AWG_CONFIG_PATH
+              value: /etc/amneziawg/wg0.conf
+            - name: AWG_INTERFACE
+              value: wg0
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            capabilities:
+              # NET_ADMIN — manipulate routes, bring up wg0
+              # MKNOD     — create /dev/net/tun when the container fs has
+              #             no device node yet (common in k3s pods)
+              drop: [ALL]
+              add: [NET_ADMIN, MKNOD]
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: vpn-config
+              mountPath: /etc/amneziawg
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          startupProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "ip link show wg0 | grep -q 'state UNKNOWN\\|state UP' && awg show wg0 | grep -q 'latest handshake'"
+            initialDelaySeconds: 3
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 45
+          livenessProbe:
+            exec:
+              command: [sh, -c, "ip link show wg0 >/dev/null 2>&1"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -29,6 +92,7 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+
       containers:
         - name: app
           image: ghcr.io/qwefemlovezxc-arch/claudecodeui-sandbox:latest
@@ -64,7 +128,7 @@ spec:
               memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false   # node writes to /tmp, /app/node_modules/.cache
+            readOnlyRootFilesystem: false
             capabilities:
               drop: [ALL]
           volumeMounts:
@@ -89,6 +153,7 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
+
       volumes:
         - name: workspace
           persistentVolumeClaim:
@@ -100,3 +165,9 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 512Mi
+        - name: vpn-config
+          secret:
+            secretName: claudecode-vpn
+            items:
+              - key: wg0.conf
+                path: wg0.conf
