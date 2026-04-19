@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: claudecodeui
+  namespace: claudecode
+  labels:
+    app: claudecodeui
+spec:
+  type: ClusterIP
+  selector:
+    app: claudecodeui
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

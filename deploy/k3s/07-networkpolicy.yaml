@@ -1,0 +1,54 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: claudecodeui-netpol
+  namespace: claudecode
+  labels:
+    app: claudecodeui
+spec:
+  podSelector:
+    matchLabels:
+      app: claudecodeui
+  policyTypes: [Ingress, Egress]
+
+  ingress:
+    # Traefik reaches us on port 3001 from kube-system.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: http
+          protocol: TCP
+
+  egress:
+    # DNS — needed before we can resolve anything else.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # VPN egress: once Stage 7 sidecar is wired, all external traffic
+    # (api.anthropic.com, github.com, npm) is forced through the WG
+    # tunnel. Until then, this allows direct internet so we can iterate.
+    # Remove these two rules after VPN sidecar is verified.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8      # k8s pod/service CIDRs
+              - 172.16.0.0/12
+              - 192.168.0.0/16  # home LAN
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP

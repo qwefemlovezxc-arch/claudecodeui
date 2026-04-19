@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: claudecode
+  labels:
+    name: claudecode
+    app.kubernetes.io/managed-by: manual

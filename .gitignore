@@ -140,3 +140,7 @@ tasks/
 
 # Git worktrees
 .worktrees/
+
+# k3s secret — filled from template, never committed
+deploy/k3s/03-secret.yaml
+deploy/k3s/06-vpn-secret.yaml
