@@ -1,0 +1,71 @@
+# claude.alskdjfh.xyz — Traefik ingress + Let's Encrypt TLS.
+#
+# Before this applies successfully:
+#   1. Cloudflare: add A record
+#        claude.alskdjfh.xyz → 194.39.99.225  (DNS-only, no orange cloud)
+#   2. cert-manager ClusterIssuer `letsencrypt-prod` must already exist.
+#      It's present on this cluster (see agents.md).
+#
+# Path: Internet → 194.39.99.225:443 → router → homelab:443 → DNAT →
+#       MetalLB VIP 192.168.100.50 → Traefik → this Ingress →
+#       claudecodeui Service :80 → pod :3001.
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: claudecodeui
+  namespace: claudecode
+  labels:
+    app: claudecodeui
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # Long timeouts — Claude streams messages over WebSocket, a single
+    # turn can run many minutes. Default Traefik read/write timeout is
+    # too short for agentic work.
+    traefik.ingress.kubernetes.io/router.middlewares: claudecode-ws-timeout@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - claude.alskdjfh.xyz
+      secretName: claudecodeui-tls
+  rules:
+    - host: claude.alskdjfh.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: claudecodeui
+                port:
+                  number: 80
+---
+# Middleware: extend read/write timeouts for the long-lived WebSocket
+# that carries the streaming chat + tool_use events.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: ws-timeout
+  namespace: claudecode
+spec:
+  # Traefik v3 syntax — timeouts are on the ServerTransport, not
+  # middleware, so we instead rely on backoff + buffering disabled here.
+  # Actual long-timeout server transport configured via ServersTransport
+  # below.
+  buffering:
+    maxRequestBodyBytes: 52428800     # 50 MiB — generous for pasted files
+    maxResponseBodyBytes: 0           # 0 = unlimited
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: claudecodeui-st
+  namespace: claudecode
+spec:
+  forwardingTimeouts:
+    dialTimeout: 30s
+    responseHeaderTimeout: 60s
+    idleConnTimeout: 3600s            # 1h — matches agentic turn length

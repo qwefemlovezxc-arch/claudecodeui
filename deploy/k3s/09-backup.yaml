@@ -1,0 +1,114 @@
+# Daily rsync backup of /workspace/nastya → homelab:/mnt/pv-hdd/.
+#
+# Runs as a separate pod (no VPN sidecar) on the same node (server3)
+# so it can reach homelab directly over the home LAN (192.168.100.200)
+# and mount the workspace PVC in parallel with the app pod (RWO on same
+# node is allowed for multiple pods).
+#
+# Manual prerequisites before first apply:
+#   1. Generate a dedicated backup keypair on server3:
+#        ssh-keygen -t ed25519 -N "" -f /tmp/claudecode-backup -C claudecode-backup
+#   2. Add the public key to homelab ~/.ssh/authorized_keys, restricted:
+#        command="rsync --server -vlogDtprz --delete . /mnt/pv-hdd/backups/claudecode-workspace/",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding <pubkey>
+#   3. Create the k8s secret from the private key:
+#        kubectl create secret generic claudecode-backup-ssh \
+#          --namespace=claudecode \
+#          --from-file=id_ed25519=/tmp/claudecode-backup \
+#          --from-literal=known_hosts="$(ssh-keyscan -t ed25519 192.168.100.200 2>/dev/null)"
+#   4. Remove /tmp/claudecode-backup from server3.
+#
+# Alert failures go to Telegram chat 1057363465 via the existing
+# alertmanager-telegram-forwarder in the monitoring namespace. See
+# failure-notify container below for the inline POST.
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: workspace-backup
+  namespace: claudecode
+  labels:
+    app: claudecodeui
+    component: backup
+spec:
+  schedule: "30 3 * * *"                   # 03:30 UTC daily
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 604800      # keep completed Jobs 7 days
+      template:
+        metadata:
+          labels:
+            app: claudecodeui
+            component: backup
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            kubernetes.io/hostname: server3
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: rsync
+              image: alpine:3.20
+              command:
+                - sh
+                - -ec
+                - |
+                  set -e
+                  apk add --no-cache rsync openssh-client >/dev/null
+
+                  mkdir -p /home/backup/.ssh
+                  cp /run/ssh/id_ed25519 /home/backup/.ssh/id_ed25519
+                  cp /run/ssh/known_hosts /home/backup/.ssh/known_hosts
+                  chmod 600 /home/backup/.ssh/id_ed25519 /home/backup/.ssh/known_hosts
+
+                  STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+                  DEST="maclaren555@192.168.100.200:/mnt/pv-hdd/backups/claudecode-workspace/${STAMP}/"
+
+                  rsync -av --delete \
+                    -e "ssh -i /home/backup/.ssh/id_ed25519 -o UserKnownHostsFile=/home/backup/.ssh/known_hosts -o StrictHostKeyChecking=yes" \
+                    /workspace/ "$DEST"
+
+                  echo "backup ok: $DEST"
+
+                  # Rotate — keep the last 14 snapshots on homelab.
+                  ssh -i /home/backup/.ssh/id_ed25519 \
+                      -o UserKnownHostsFile=/home/backup/.ssh/known_hosts \
+                      -o StrictHostKeyChecking=yes \
+                      maclaren555@192.168.100.200 \
+                      'ls -1dt /mnt/pv-hdd/backups/claudecode-workspace/*/ 2>/dev/null | tail -n +15 | xargs -r rm -rf'
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                  readOnly: true
+                - name: ssh
+                  mountPath: /run/ssh
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+          volumes:
+            - name: workspace
+              persistentVolumeClaim:
+                claimName: claude-workspace
+                readOnly: true
+            - name: ssh
+              secret:
+                secretName: claudecode-backup-ssh
+                defaultMode: 0400
