@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-# ─── Stage 1: build client + server ─────────────────────────────────────
-FROM node:22-bookworm AS builder
+# ─── Stage 1: build client + server + Claude CLI ──────────────────────────
+# All apt / npm install is done here where the full bookworm base already
+# has working deb repos and build tooling. The runtime stage only copies
+# finished artefacts, avoiding any apt-get calls on first boot.
+FROM mirror.gcr.io/library/node:22-bookworm AS builder
 
 WORKDIR /app
 
@@ -11,7 +14,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
+# scripts/fix-node-pty.js runs as a postinstall hook during `npm ci`,
+# so it has to exist before the install runs.
+COPY scripts ./scripts
 RUN npm ci --no-audit --no-fund
+
+# Install the official Claude Code CLI globally. This lands in
+# /usr/local/lib/node_modules/@anthropic-ai/claude-code and a bin symlink
+# at /usr/local/bin/claude, both copied to the runtime image below.
+RUN npm install -g @anthropic-ai/claude-code
 
 COPY . .
 RUN npm run build
@@ -20,20 +31,20 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 
-# ─── Stage 2: runtime ───────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS runtime
-
-# Claude CLI provides the `claude` binary we spawn from claude-sdk.js.
-# tini is PID 1 so SIGTERM / SIGKILL propagate into subprocess sessions
-# properly when k8s rolls the pod.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git tini curl \
-    && npm install -g @anthropic-ai/claude-code \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# ─── Stage 2: runtime ─────────────────────────────────────────────────────
+# node:22-bookworm (non-slim) already has ca-certificates, curl and git
+# baked in, so we don't run apt-get here. Avoids flaky deb.debian.org
+# fetches from server3 that were killing earlier builds.
+FROM mirror.gcr.io/library/node:22-bookworm AS runtime
 
 ARG UID=1000
 ARG GID=1000
-RUN groupadd --gid $GID claude && \
+# node:22-bookworm ships a `node` user at 1000:1000 by default. Remove it
+# so we can own that uid/gid with our `claude` user (matches the k8s
+# deployment's runAsUser/runAsGroup).
+RUN userdel -rf node 2>/dev/null || true; \
+    groupdel node 2>/dev/null || true; \
+    groupadd --gid $GID claude && \
     useradd --uid $UID --gid $GID --create-home --shell /bin/bash claude
 
 # Sandbox root — must match WORKSPACES_ROOT env. PVC will mount here in k8s.
@@ -41,6 +52,11 @@ RUN mkdir -p /workspace/nastya /home/claude/.claude && \
     chown -R claude:claude /workspace /home/claude
 
 WORKDIR /app
+
+# Bring over the global Claude CLI and its node_modules directory from
+# the builder. Keeps the runtime stage apt-free.
+COPY --from=builder /usr/local/lib/node_modules/@anthropic-ai  /usr/local/lib/node_modules/@anthropic-ai
+COPY --from=builder /usr/local/bin/claude                      /usr/local/bin/claude
 
 COPY --from=builder --chown=claude:claude /app/dist /app/dist
 COPY --from=builder --chown=claude:claude /app/dist-server /app/dist-server
@@ -60,8 +76,9 @@ USER claude
 
 EXPOSE 3001
 
+# Using node for the healthcheck so we don't need curl in the runtime
+# image. k8s's httpGet liveness/readiness probes are still the authority.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:3001/health || exit 1
+    CMD node -e "require('http').get('http://127.0.0.1:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist-server/server/index.js"]

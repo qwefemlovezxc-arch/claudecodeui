@@ -32,11 +32,50 @@ spec:
           - 100.64.0.1    # VPN internal resolver (from nl.conf DNS=)
           - 8.8.4.4
 
-      # ── Sidecar: AmneziaWG userspace tunnel ──────────────────────────
-      # Native k8s sidecar (initContainer with restartPolicy: Always).
-      # Starts first, stays up, app container waits for its startup probe
-      # to succeed before it begins.
       initContainers:
+        # ── OAuth bootstrap ──────────────────────────────────────────
+        # Seeds /home/claude/.claude/.credentials.json from the Secret
+        # on first run, so the Claude CLI has a valid token without the
+        # operator needing to `claude login` interactively in the pod.
+        # Idempotent: on subsequent restarts the PVC already holds the
+        # file (possibly with a refreshed token) and we leave it alone.
+        - name: oauth-bootstrap
+          image: mirror.gcr.io/library/busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              if [ ! -s /state/.credentials.json ]; then
+                cp /bootstrap/credentials.json /state/.credentials.json
+                chmod 600 /state/.credentials.json
+                chown 1000:1000 /state/.credentials.json
+                echo "credentials.json bootstrapped from secret"
+              else
+                echo "credentials.json already exists on PVC, leaving as-is"
+              fi
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, FOWNER]
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: oauth-bootstrap
+              mountPath: /bootstrap
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+
+        # ── Sidecar: AmneziaWG userspace tunnel ──────────────────────
+        # Native k8s sidecar (initContainer with restartPolicy: Always).
+        # Starts after oauth-bootstrap completes, stays up for the pod
+        # lifetime, app container waits for its startup probe before it
+        # begins.
         - name: vpn
           image: ghcr.io/qwefemlovezxc-arch/amneziawg-sidecar:latest
           imagePullPolicy: Never    # local-only image, built+imported on server3
@@ -171,3 +210,10 @@ spec:
             items:
               - key: wg0.conf
                 path: wg0.conf
+        - name: oauth-bootstrap
+          secret:
+            secretName: claudecode-oauth
+            items:
+              - key: credentials.json
+                path: credentials.json
+            defaultMode: 0400

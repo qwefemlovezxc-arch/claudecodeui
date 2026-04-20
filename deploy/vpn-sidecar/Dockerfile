@@ -9,7 +9,7 @@
 # tunnel. Requires CAP_NET_ADMIN.
 
 # ─── Build amneziawg-go ─────────────────────────────────────────────────
-FROM golang:1.22-alpine AS build-awg-go
+FROM mirror.gcr.io/library/golang:1.24-alpine AS build-awg-go
 RUN apk add --no-cache git make build-base linux-headers
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git . && \
@@ -17,7 +17,7 @@ RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-go.git . && \
 
 
 # ─── Build amneziawg-tools (awg, awg-quick) ─────────────────────────────
-FROM alpine:3.20 AS build-awg-tools
+FROM mirror.gcr.io/library/alpine:3.20 AS build-awg-tools
 RUN apk add --no-cache git make build-base linux-headers bash
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git . && \
@@ -25,11 +25,14 @@ RUN git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git . && 
 
 
 # ─── Runtime ────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM mirror.gcr.io/library/alpine:3.20
 RUN apk add --no-cache iptables iproute2 bash ca-certificates tini
 
 COPY --from=build-awg-go    /src/amneziawg-go          /usr/local/bin/amneziawg-go
-COPY --from=build-awg-tools /src/src/awg               /usr/local/bin/awg
+# amneziawg-tools is a fork of wireguard-tools, so the compiled binary
+# keeps the upstream name `wg`. Rename to `awg` at copy time so the
+# entrypoint.sh / runbook references `awg setconf` etc. unchanged.
+COPY --from=build-awg-tools /src/src/wg                /usr/local/bin/awg
 COPY --from=build-awg-tools /src/src/wg-quick/linux.bash /usr/local/bin/awg-quick
 RUN chmod +x /usr/local/bin/amneziawg-go /usr/local/bin/awg /usr/local/bin/awg-quick && \
     mkdir -p /etc/amneziawg
