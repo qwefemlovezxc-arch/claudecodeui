@@ -40,6 +40,10 @@ type ProviderDef = {
   check: string;
 };
 
+// Upstream ships Claude / Cursor / Codex / Gemini. This sandboxed fork
+// runs only claude (other providers would need their own OAuth / API
+// keys, which defeats the ToS-safe subprocess design). Keep the array
+// structure intact so the rest of the empty-state code is untouched.
 const PROVIDERS: ProviderDef[] = [
   {
     id: "claude",
@@ -48,30 +52,6 @@ const PROVIDERS: ProviderDef[] = [
     accent: "border-primary",
     ring: "ring-primary/15",
     check: "bg-primary text-primary-foreground",
-  },
-  {
-    id: "cursor",
-    name: "Cursor",
-    infoKey: "providerSelection.providerInfo.cursorEditor",
-    accent: "border-violet-500 dark:border-violet-400",
-    ring: "ring-violet-500/15",
-    check: "bg-violet-500 text-white",
-  },
-  {
-    id: "codex",
-    name: "Codex",
-    infoKey: "providerSelection.providerInfo.openai",
-    accent: "border-emerald-600 dark:border-emerald-400",
-    ring: "ring-emerald-600/15",
-    check: "bg-emerald-600 dark:bg-emerald-500 text-white",
-  },
-  {
-    id: "gemini",
-    name: "Gemini",
-    infoKey: "providerSelection.providerInfo.google",
-    accent: "border-blue-500 dark:border-blue-400",
-    ring: "ring-blue-500/15",
-    check: "bg-blue-500 text-white",
   },
 ];
 
