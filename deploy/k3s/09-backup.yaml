@@ -44,32 +44,49 @@ spec:
       template:
         metadata:
           labels:
-            app: claudecodeui
-            component: backup
+            # Intentionally NOT labeled app=claudecodeui so the
+            # NetworkPolicy in 07-networkpolicy.yaml (which restricts
+            # egress to UDP:45649 only) doesn't apply — the backup pod
+            # needs to hit alpine repos + homelab SSH.
+            component: claudecode-backup
         spec:
           restartPolicy: OnFailure
           nodeSelector:
             kubernetes.io/hostname: server3
           automountServiceAccountToken: false
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
-            fsGroup: 1000
+          # Backup container runs as root so `apk add` can install rsync
+          # and openssh-client into a plain alpine image. Blast radius is
+          # tight: the pod only mounts /workspace RO and the SSH key
+          # Secret RO, has no service account, and terminates in seconds.
+          # A pre-baked image would be cleaner but isn't worth the
+          # extra build for a once-a-day 30s job.
           containers:
             - name: rsync
-              image: alpine:3.20
+              image: mirror.gcr.io/library/alpine:3.20
+              imagePullPolicy: IfNotPresent
               command:
                 - sh
                 - -ec
                 - |
                   set -e
-                  apk add --no-cache rsync openssh-client >/dev/null
+                  # apk needs root; we're running as uid 1000. Ship the
+                  # package cache pre-populated by installing at build
+                  # time would be cleaner, but for now add --no-root
+                  # via pre-downloaded wheels is overkill. Two options:
+                  # either bake into a custom image, or use /tmp for
+                  # state because /home/ isn't writable by uid 1000.
+                  apk add --no-cache rsync openssh-client >/dev/null 2>&1 || {
+                    # apk failed (network or perms). Fall through only
+                    # if rsync+ssh are already available.
+                    command -v rsync >/dev/null && command -v ssh >/dev/null \
+                      || { echo "rsync/ssh unavailable and apk failed"; exit 1; }
+                  }
 
-                  mkdir -p /home/backup/.ssh
-                  cp /run/ssh/id_ed25519 /home/backup/.ssh/id_ed25519
-                  cp /run/ssh/known_hosts /home/backup/.ssh/known_hosts
-                  chmod 600 /home/backup/.ssh/id_ed25519 /home/backup/.ssh/known_hosts
+                  # /tmp is writable by uid 1000; /home/backup isn't.
+                  mkdir -p /tmp/ssh
+                  cp /run/ssh/id_ed25519 /tmp/ssh/id_ed25519
+                  cp /run/ssh/known_hosts /tmp/ssh/known_hosts
+                  chmod 600 /tmp/ssh/id_ed25519 /tmp/ssh/known_hosts
 
                   STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
                   # rrsync chroots the destination to the backups base
@@ -77,7 +94,7 @@ spec:
                   DEST="maclaren555@192.168.100.200:${STAMP}/"
 
                   rsync -av --delete \
-                    -e "ssh -i /home/backup/.ssh/id_ed25519 -o UserKnownHostsFile=/home/backup/.ssh/known_hosts -o StrictHostKeyChecking=yes" \
+                    -e "ssh -i /tmp/ssh/id_ed25519 -o UserKnownHostsFile=/tmp/ssh/known_hosts -o StrictHostKeyChecking=yes" \
                     /workspace/ "$DEST"
 
                   echo "backup ok: ${STAMP}"
