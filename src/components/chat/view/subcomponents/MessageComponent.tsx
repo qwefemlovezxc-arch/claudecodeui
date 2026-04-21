@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
+// SessionProviderLogo was rendered as the assistant avatar; this fork
+// strips the avatar from plain assistant replies (claude.ai look), so
+// the import is no longer needed.
 import type {
   ChatMessage,
   ClaudePermissionSuggestion,
@@ -115,10 +117,12 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
       className={`chat-message ${message.type} ${isGrouped ? 'grouped' : ''} ${message.type === 'user' ? 'flex justify-end px-3 sm:px-0' : 'px-3 sm:px-0'}`}
     >
       {message.type === 'user' ? (
-        /* User message bubble on the right */
-        <div className="flex w-full items-end space-x-0 sm:w-auto sm:max-w-[85%] sm:space-x-3 md:max-w-md lg:max-w-lg xl:max-w-xl">
-          <div className="group flex-1 rounded-2xl rounded-br-md bg-blue-600 px-3 py-2 text-white shadow-sm sm:flex-initial sm:px-4">
-            <div className="whitespace-pre-wrap break-words text-sm">
+        /* User message — compact pill on the right, claude.ai style.
+           No blue, no avatar, no contained timestamp — timestamp only
+           appears on hover via the copy-control row. */
+        <div className="flex w-full justify-end sm:w-auto sm:max-w-[78%]">
+          <div className="group rounded-2xl bg-muted px-4 py-2 text-foreground sm:px-4">
+            <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
               {message.content}
             </div>
             {message.images && message.images.length > 0 && (
@@ -134,18 +138,13 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
                 ))}
               </div>
             )}
-            <div className="mt-1 flex items-center justify-end gap-1 text-xs text-blue-100">
-              {shouldShowUserCopyControl && (
+            {shouldShowUserCopyControl && (
+              <div className="mt-1 flex items-center justify-end gap-1 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
                 <MessageCopyControl content={userCopyContent} messageType="user" />
-              )}
-              <span>{formattedTime}</span>
-            </div>
+                <span>{formattedTime}</span>
+              </div>
+            )}
           </div>
-          {!isGrouped && (
-            <div className="hidden h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm text-white sm:flex">
-              U
-            </div>
-          )}
         </div>
       ) : message.isTaskNotification ? (
         /* Compact task notification on the left */
@@ -156,25 +155,25 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, o
           </div>
         </div>
       ) : (
-        /* Claude/Error/Tool messages on the left */
+        /* Claude/Error/Tool messages on the left. We only keep the
+           role label for error/tool (where it's actually useful) —
+           plain assistant replies render as flat prose without the
+           "Claude" avatar + label above them. That's the claude.ai
+           look: just the answer. */
         <div className="w-full">
-          {!isGrouped && (
+          {!isGrouped && (message.type === 'error' || message.type === 'tool') && (
             <div className="mb-2 flex items-center space-x-3">
               {message.type === 'error' ? (
-                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-sm text-white">
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-destructive text-xs text-destructive-foreground">
                   !
                 </div>
-              ) : message.type === 'tool' ? (
-                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gray-600 text-sm text-white dark:bg-gray-700">
+              ) : (
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground text-xs">
                   🔧
                 </div>
-              ) : (
-                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full p-1 text-sm text-white">
-                  <SessionProviderLogo provider={provider} className="h-full w-full" />
-                </div>
               )}
-              <div className="text-sm font-medium text-gray-900 dark:text-white">
-                {message.type === 'error' ? t('messageTypes.error') : message.type === 'tool' ? t('messageTypes.tool') : (provider === 'cursor' ? t('messageTypes.cursor') : provider === 'codex' ? t('messageTypes.codex') : provider === 'gemini' ? t('messageTypes.gemini') : t('messageTypes.claude'))}
+              <div className="text-sm font-medium text-foreground">
+                {message.type === 'error' ? t('messageTypes.error') : t('messageTypes.tool')}
               </div>
             </div>
           )}

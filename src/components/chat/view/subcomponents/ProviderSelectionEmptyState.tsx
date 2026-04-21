@@ -1,15 +1,18 @@
 import React from "react";
-import { Check, ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import SessionProviderLogo from "../../../llm-logo-provider/SessionProviderLogo";
-import {
-  CLAUDE_MODELS,
-  CURSOR_MODELS,
-  CODEX_MODELS,
-  GEMINI_MODELS,
-} from "../../../../../shared/modelConstants";
+import { Code2, Pencil, GraduationCap, Coffee, Lightbulb } from "lucide-react";
 import type { ProjectSession, LLMProvider } from "../../../../types/app";
 import { NextTaskBanner } from "../../../task-master";
+
+// Empty state redesign — matches the claude.ai /new layout. Upstream
+// had a 4-provider picker here (Claude / Cursor / Codex / Gemini);
+// this fork is Claude-only, so the picker makes no sense. We show a
+// big serif greeting with the sparkle, then a row of 5 suggestion
+// pills that prefill the composer. The composer itself is rendered
+// by ChatComposer below — this component owns only the hero region.
+//
+// Props are kept to match the upstream signature so callers
+// (ChatMessagesPane) don't need to change.
 
 type ProviderSelectionEmptyStateProps = {
   selectedSession: ProjectSession | null;
@@ -31,64 +34,64 @@ type ProviderSelectionEmptyStateProps = {
   setInput: React.Dispatch<React.SetStateAction<string>>;
 };
 
-type ProviderDef = {
-  id: LLMProvider;
-  name: string;
-  infoKey: string;
-  accent: string;
-  ring: string;
-  check: string;
+type Suggestion = {
+  id: string;
+  label: string;
+  prompt: string;
+  Icon: React.ComponentType<{ className?: string }>;
 };
 
-// Upstream ships Claude / Cursor / Codex / Gemini. This sandboxed fork
-// runs only claude (other providers would need their own OAuth / API
-// keys, which defeats the ToS-safe subprocess design). Keep the array
-// structure intact so the rest of the empty-state code is untouched.
-const PROVIDERS: ProviderDef[] = [
+const SUGGESTIONS: Suggestion[] = [
   {
-    id: "claude",
-    name: "Claude Code",
-    infoKey: "providerSelection.providerInfo.anthropic",
-    accent: "border-primary",
-    ring: "ring-primary/15",
-    check: "bg-primary text-primary-foreground",
+    id: "code",
+    label: "Code",
+    prompt: "Review this code and suggest improvements.\n\n",
+    Icon: Code2,
+  },
+  {
+    id: "write",
+    label: "Write",
+    prompt: "Draft a concise summary of the following text.\n\n",
+    Icon: Pencil,
+  },
+  {
+    id: "learn",
+    label: "Learn",
+    prompt: "Explain this concept like I'm an experienced engineer new to the topic: ",
+    Icon: GraduationCap,
+  },
+  {
+    id: "life",
+    label: "Life stuff",
+    prompt: "Help me think through this decision: ",
+    Icon: Coffee,
+  },
+  {
+    id: "choice",
+    label: "Claude's choice",
+    prompt: "Pick a topic you'd enjoy helping with today and introduce it in one paragraph.",
+    Icon: Lightbulb,
   },
 ];
 
-function getModelConfig(p: LLMProvider) {
-  if (p === "claude") return CLAUDE_MODELS;
-  if (p === "codex") return CODEX_MODELS;
-  if (p === "gemini") return GEMINI_MODELS;
-  return CURSOR_MODELS;
-}
-
-function getModelValue(
-  p: LLMProvider,
-  c: string,
-  cu: string,
-  co: string,
-  g: string,
-) {
-  if (p === "claude") return c;
-  if (p === "codex") return co;
-  if (p === "gemini") return g;
-  return cu;
+// Corral 8-point sparkle — inline SVG so we don't ship an icon asset.
+function Sparkle({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 1c.3 0 .55.2.62.49l1.2 4.95 4.5-1.9a.64.64 0 0 1 .78.93l-2.58 4.08 4.2 2.5a.64.64 0 0 1 0 1.1l-4.2 2.5 2.58 4.08a.64.64 0 0 1-.78.93l-4.5-1.9-1.2 4.95a.64.64 0 0 1-1.24 0l-1.2-4.95-4.5 1.9a.64.64 0 0 1-.78-.93l2.58-4.08-4.2-2.5a.64.64 0 0 1 0-1.1l4.2-2.5L3.4 5.47a.64.64 0 0 1 .78-.93l4.5 1.9L9.88 1.5A.64.64 0 0 1 10.5 1h1.5z" />
+    </svg>
+  );
 }
 
 export default function ProviderSelectionEmptyState({
   selectedSession,
   currentSessionId,
-  provider,
-  setProvider,
   textareaRef,
-  claudeModel,
-  setClaudeModel,
-  cursorModel,
-  setCursorModel,
-  codexModel,
-  setCodexModel,
-  geminiModel,
-  setGeminiModel,
   tasksEnabled,
   isTaskMasterInstalled,
   onShowAllTasks,
@@ -99,146 +102,53 @@ export default function ProviderSelectionEmptyState({
     defaultValue: "Start the next task",
   });
 
-  const selectProvider = (next: LLMProvider) => {
-    setProvider(next);
-    localStorage.setItem("selected-provider", next);
-    setTimeout(() => textareaRef.current?.focus(), 100);
+  const handleSuggestion = (s: Suggestion) => {
+    setInput(s.prompt);
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
-  const handleModelChange = (value: string) => {
-    if (provider === "claude") {
-      setClaudeModel(value);
-      localStorage.setItem("claude-model", value);
-    } else if (provider === "codex") {
-      setCodexModel(value);
-      localStorage.setItem("codex-model", value);
-    } else if (provider === "gemini") {
-      setGeminiModel(value);
-      localStorage.setItem("gemini-model", value);
-    } else {
-      setCursorModel(value);
-      localStorage.setItem("cursor-model", value);
-    }
-  };
+  // Try to read the display name for the greeting. Falls back to the
+  // stubbed "work" profile label until auth wiring lands in UI-2.5.
+  const greetingName =
+    (typeof window !== "undefined" && localStorage.getItem("current-username")) ||
+    "work";
 
-  const modelConfig = getModelConfig(provider);
-  const currentModel = getModelValue(
-    provider,
-    claudeModel,
-    cursorModel,
-    codexModel,
-    geminiModel,
-  );
-
-  /* ── New session — provider picker ── */
+  /* ── New session — claude.ai /new layout ── */
   if (!selectedSession && !currentSessionId) {
     return (
-      <div className="flex h-full items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          {/* Heading */}
-          <div className="mb-8 text-center">
-            <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-              {t("providerSelection.title")}
-            </h2>
-            <p className="mt-1 text-[13px] text-muted-foreground">
-              {t("providerSelection.description")}
-            </p>
+      <div className="flex h-full w-full items-center justify-center px-4 md:px-8">
+        <div className="w-full max-w-2xl">
+          {/* Greeting — sparkle + serif display line */}
+          <div className="mb-10 flex items-center justify-center gap-4">
+            <Sparkle className="h-8 w-8 shrink-0 text-primary md:h-9 md:w-9" />
+            <h1 className="font-display text-[36px] leading-[1.05] tracking-tight md:text-[50px]">
+              {t("empty.greeting", {
+                defaultValue: "{{name}} returns!",
+                name: greetingName,
+              })}
+            </h1>
           </div>
 
-          {/* Provider cards — horizontal row, equal width */}
-          <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-2.5">
-            {PROVIDERS.map((p) => {
-              const active = provider === p.id;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => selectProvider(p.id)}
-                  className={`
-                    relative flex flex-col items-center gap-2.5 rounded-xl border-[1.5px] px-2
-                    pb-4 pt-5 transition-all duration-150
-                    active:scale-[0.97]
-                    ${
-                      active
-                        ? `${p.accent} ${p.ring} bg-card shadow-sm ring-2`
-                        : "border-border bg-card/60 hover:border-border/80 hover:bg-card"
-                    }
-                  `}
-                >
-                  <SessionProviderLogo
-                    provider={p.id}
-                    className={`h-9 w-9 transition-transform duration-150 ${active ? "scale-110" : ""}`}
-                  />
-                  <div className="text-center">
-                    <p className="text-[13px] font-semibold leading-none text-foreground">
-                      {p.name}
-                    </p>
-                    <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
-                      {t(p.infoKey)}
-                    </p>
-                  </div>
-                  {/* Check badge */}
-                  {active && (
-                    <div
-                      className={`absolute -right-1 -top-1 h-[18px] w-[18px] rounded-full ${p.check} flex items-center justify-center shadow-sm`}
-                    >
-                      <Check className="h-2.5 w-2.5" strokeWidth={3} />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+          {/* Suggestion pills — prefill the composer */}
+          <div className="mb-8 flex flex-wrap items-center justify-center gap-2">
+            {SUGGESTIONS.map(({ id, label, Icon, prompt }) => (
+              <button
+                key={id}
+                onClick={() =>
+                  handleSuggestion({ id, label, Icon, prompt } as Suggestion)
+                }
+                className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-sm text-foreground transition-colors hover:bg-accent"
+              >
+                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>{label}</span>
+              </button>
+            ))}
           </div>
 
-          {/* Model picker — appears after provider is chosen */}
-          <div
-            className={`transition-all duration-200 ${provider ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-1 opacity-0"}`}
-          >
-            <div className="mb-5 flex items-center justify-center gap-2">
-              <span className="text-sm text-muted-foreground">
-                {t("providerSelection.selectModel")}
-              </span>
-              <div className="relative">
-                <select
-                  value={currentModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
-                  tabIndex={-1}
-                  className="cursor-pointer appearance-none rounded-lg border border-border/60 bg-muted/50 py-1.5 pl-3 pr-7 text-sm font-medium text-foreground transition-colors hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/20"
-                >
-                  {modelConfig.OPTIONS.map(
-                    ({ value, label }: { value: string; label: string }) => (
-                      <option key={value + label} value={value}>
-                        {label}
-                      </option>
-                    ),
-                  )}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-              </div>
-            </div>
-
-            <p className="text-center text-sm text-muted-foreground/70">
-              {
-                {
-                  claude: t("providerSelection.readyPrompt.claude", {
-                    model: claudeModel,
-                  }),
-                  cursor: t("providerSelection.readyPrompt.cursor", {
-                    model: cursorModel,
-                  }),
-                  codex: t("providerSelection.readyPrompt.codex", {
-                    model: codexModel,
-                  }),
-                  gemini: t("providerSelection.readyPrompt.gemini", {
-                    model: geminiModel,
-                  }),
-                }[provider]
-              }
-            </p>
-          </div>
-
-          {/* Task banner */}
-          {provider && tasksEnabled && isTaskMasterInstalled && (
-            <div className="mt-5">
+          {/* Task banner kept from upstream — renders only when the
+              TaskMaster plugin is installed and enabled. */}
+          {tasksEnabled && isTaskMasterInstalled && (
+            <div className="mt-4">
               <NextTaskBanner
                 onStartTask={() => setInput(nextTaskPrompt)}
                 onShowAllTasks={onShowAllTasks}
@@ -250,7 +160,7 @@ export default function ProviderSelectionEmptyState({
     );
   }
 
-  /* ── Existing session — continue prompt ── */
+  /* ── Existing session — minimal continue prompt ── */
   if (selectedSession) {
     return (
       <div className="flex h-full items-center justify-center">

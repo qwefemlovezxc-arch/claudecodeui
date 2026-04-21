@@ -126,6 +126,12 @@
 }
 
 @layer base {
+  .font-display {
+    font-family: 'Fraunces', ui-serif, Georgia, 'Times New Roman', serif;
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+
   * {
     @apply border-border;
     box-sizing: border-box;
